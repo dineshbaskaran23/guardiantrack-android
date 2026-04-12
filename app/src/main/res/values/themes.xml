@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.GuardianTrack" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#00C9A7</item>
+        <item name="colorPrimaryVariant">#0A1628</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="android:statusBarColor">#0A1628</item>
+        <item name="android:navigationBarColor">#112240</item>
+        <item name="android:windowBackground">#0A1628</item>
+    </style>
+    <style name="Theme.GuardianTrack.Splash" parent="Theme.GuardianTrack"/>
+</resources>
