@@ -11,7 +11,6 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.BatteryManager;
 import android.os.Bundle;
-import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
@@ -26,20 +25,17 @@ public class LocationService extends Service {
 
     private static final String TAG = "GuardianTrack";
     private static final String BACKEND = "https://guardiantrack-backend.onrender.com";
-    private static final long INTERVAL_MS = 30000; // 30 seconds
+    private static final long INTERVAL_MS = 30000;
     private static final float MIN_DISTANCE_M = 10;
 
     private LocationManager locationManager;
     private OkHttpClient httpClient;
-    private Handler handler;
     private String phone = "";
     private String token = "";
-    private Location lastLocation = null;
 
     private LocationListener locationListener = new LocationListener() {
         @Override
         public void onLocationChanged(Location location) {
-            lastLocation = location;
             sendLocation(location);
         }
         @Override public void onStatusChanged(String p, int s, Bundle e) {}
@@ -55,7 +51,6 @@ public class LocationService extends Service {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .build();
-        handler = new Handler(Looper.getMainLooper());
     }
 
     @Override
@@ -64,93 +59,91 @@ public class LocationService extends Service {
             phone = intent.getStringExtra("phone") != null ? intent.getStringExtra("phone") : "";
             token = intent.getStringExtra("token") != null ? intent.getStringExtra("token") : "";
         }
-
-        // Start foreground notification so Android doesn't kill the service
-        Notification notification = new Notification.Builder(this, MainActivity.CH_GPS)
+        startForeground(1, new Notification.Builder(this, MainActivity.CH_GPS)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("GuardianTrack Active")
             .setContentText("Sending location every 30 seconds")
-            .setOngoing(true)
-            .build();
-        startForeground(1, notification);
-
+            .setOngoing(true).build());
         startLocationUpdates();
-        return START_STICKY; // Restart if killed by system
+        return START_STICKY;
     }
 
     private void startLocationUpdates() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) {
+                != PackageManager.PERMISSION_GRANTED) {
             Log.e(TAG, "No location permission");
             return;
         }
-
-        // Use GPS provider for best accuracy
         if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
             locationManager.requestLocationUpdates(
                 LocationManager.GPS_PROVIDER, INTERVAL_MS, MIN_DISTANCE_M, locationListener);
         }
-
-        // Also use network for faster first fix
         if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
             locationManager.requestLocationUpdates(
                 LocationManager.NETWORK_PROVIDER, INTERVAL_MS, MIN_DISTANCE_M, locationListener);
         }
-
-        Log.d(TAG, "Location updates started for phone: " + phone);
+        Log.d(TAG, "Location updates started");
     }
 
-    private void sendLocation(Location loc) {
+    private void sendLocation(final Location loc) {
         if (token.isEmpty() || phone.isEmpty()) return;
+        final float battery = getBatteryLevel();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    // Build JSON using concatenation - avoids all escaping issues
+                    String body = "{" +
+                        "\"lat\":" + loc.getLatitude() + "," +
+                        "\"lng\":" + loc.getLongitude() + "," +
+                        "\"speed\":" + (loc.getSpeed() * 3.6f) + "," +
+                        "\"accuracy\":" + loc.getAccuracy() + "," +
+                        "\"battery\":" + (int) battery + "," +
+                        "\"phone\":\"" + phone + "\"" +
+                        "}";
 
-        float battery = getBatteryLevel();
+                    Request request = new Request.Builder()
+                        .url(BACKEND + "/api/location/update")
+                        .addHeader("Authorization", "Bearer " + token)
+                        .addHeader("Content-Type", "application/json")
+                        .post(RequestBody.create(body, MediaType.parse("application/json")))
+                        .build();
 
-        new Thread(() -> {
-            try {
-                String body = String.format(
-                    "{"lat":%f,"lng":%f,"speed":%f,"accuracy":%f,"battery":%.0f,"phone":"%s"}",
-                    loc.getLatitude(), loc.getLongitude(),
-                    loc.getSpeed() * 3.6f, // convert m/s to km/h
-                    loc.getAccuracy(),
-                    battery,
-                    phone);
+                    okhttp3.Response response = httpClient.newCall(request).execute();
+                    Log.d(TAG, "Location sent. Status: " + response.code());
+                    response.close();
 
-                Request request = new Request.Builder()
-                    .url(BACKEND + "/api/location/update")
-                    .addHeader("Authorization", "Bearer " + token)
-                    .addHeader("Content-Type", "application/json")
-                    .post(RequestBody.create(body, MediaType.parse("application/json")))
-                    .build();
-
-                okhttp3.Response response = httpClient.newCall(request).execute();
-                Log.d(TAG, "Location sent: " + loc.getLatitude() + "," + loc.getLongitude() +
-                    " Status: " + response.code());
-                response.close();
-
-                // Alert if battery is low
-                if (battery < 20) {
-                    sendBatteryAlert(battery);
+                    if (battery < 20) {
+                        sendBatteryAlert(battery);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to send location: " + e.getMessage());
                 }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to send location: " + e.getMessage());
             }
         }).start();
     }
 
-    private void sendBatteryAlert(float battery) {
-        new Thread(() -> {
-            try {
-                String body = String.format(
-                    "{"type":"battery","message":"Battery low: %.0f%%","phone":"%s"}",
-                    battery, phone);
-                Request request = new Request.Builder()
-                    .url(BACKEND + "/api/alerts")
-                    .addHeader("Authorization", "Bearer " + token)
-                    .addHeader("Content-Type", "application/json")
-                    .post(RequestBody.create(body, MediaType.parse("application/json")))
-                    .build();
-                httpClient.newCall(request).execute().close();
-            } catch (Exception e) { Log.e(TAG, "Battery alert failed"); }
+    private void sendBatteryAlert(final float battery) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String body = "{" +
+                        "\"type\":\"battery\"," +
+                        "\"message\":\"Battery low: " + (int) battery + "%\"," +
+                        "\"phone\":\"" + phone + "\"" +
+                        "}";
+                    Request request = new Request.Builder()
+                        .url(BACKEND + "/api/alerts")
+                        .addHeader("Authorization", "Bearer " + token)
+                        .addHeader("Content-Type", "application/json")
+                        .post(RequestBody.create(body, MediaType.parse("application/json")))
+                        .build();
+                    httpClient.newCall(request).execute().close();
+                } catch (Exception e) {
+                    Log.e(TAG, "Battery alert failed: " + e.getMessage());
+                }
+            }
         }).start();
     }
 

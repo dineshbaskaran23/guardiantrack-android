@@ -40,13 +40,13 @@ public class MainActivity extends AppCompatActivity {
     private void createNotificationChannels() {
         NotificationChannel sos = new NotificationChannel(
             CH_SOS, "SOS Alerts", NotificationManager.IMPORTANCE_HIGH);
-        sos.setDescription("Emergency SOS alerts from family members");
+        sos.setDescription("Emergency SOS alerts");
         sos.enableVibration(true);
         sos.setVibrationPattern(new long[]{0, 400, 200, 400, 200, 400});
 
         NotificationChannel gps = new NotificationChannel(
             CH_GPS, "GPS Tracking", NotificationManager.IMPORTANCE_LOW);
-        gps.setDescription("Background location tracking service");
+        gps.setDescription("Background GPS tracking");
 
         NotificationManager nm = getSystemService(NotificationManager.class);
         nm.createNotificationChannel(sos);
@@ -73,25 +73,20 @@ public class MainActivity extends AppCompatActivity {
     private void setupWebView() {
         webView = findViewById(R.id.webView);
         WebSettings settings = webView.getSettings();
-
-        // Enable all required features
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setGeolocationEnabled(true);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
 
-        // Inject Android bridge for JS to call native features
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin,
-                GeolocationPermissions.Callback callback) {
-                // Auto-approve geolocation for our backend
+                    GeolocationPermissions.Callback callback) {
                 callback.invoke(origin, true, false);
             }
         });
@@ -99,34 +94,22 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                // Restore saved session into WebView localStorage
                 String token = prefs.getString("gt_token", "");
                 String user = prefs.getString("gt_user", "null");
                 String people = prefs.getString("gt_people", "[]");
                 if (!token.isEmpty()) {
-                    String escaped_user = user.replace("'", "\'");
-                    String escaped_people = people.replace("'", "\'");
                     webView.evaluateJavascript(
                         "localStorage.setItem('gt_token','" + token + "');" +
-                        "localStorage.setItem('gt_user','" + escaped_user + "');" +
-                        "localStorage.setItem('gt_people','" + escaped_people + "');",
+                        "localStorage.setItem('gt_user','" + user.replace("'", "\\'") + "');" +
+                        "localStorage.setItem('gt_people','" + people.replace("'", "\\'") + "');",
                         null);
                 }
             }
-
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 if (url.startsWith("tel:")) {
                     startActivity(new Intent(Intent.ACTION_DIAL, Uri.parse(url)));
                     return true;
-                }
-                // Block non-allowed URLs for security
-                if (!url.contains("guardiantrack-backend.onrender.com") &&
-                    !url.contains("openstreetmap.org") &&
-                    !url.contains("open-meteo.com") &&
-                    !url.contains("jsdelivr.net")) {
-                    return true; // Block
                 }
                 return false;
             }
@@ -135,7 +118,6 @@ public class MainActivity extends AppCompatActivity {
         webView.loadUrl("https://guardiantrack-backend.onrender.com/dashboard.html");
     }
 
-    // Bridge: JavaScript can call these methods from the WebView
     public class AndroidBridge {
 
         @JavascriptInterface
@@ -148,28 +130,25 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @JavascriptInterface
-        public void triggerSOS(String personName, String lat, String lng) {
-            runOnUiThread(() -> {
-                // SOS Morse code vibration: ... --- ...
-                Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-                long[] pattern = {0,200,100,200,100,200,200,500,100,500,100,500,200,200,100,200,100,200};
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    v.vibrate(VibrationEffect.createWaveform(pattern, -1));
+        public void triggerSOS(final String personName, final String lat, final String lng) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Vibrator v = (Vibrator) getSystemService(VIBRATOR_SERVICE);
+                    long[] pattern = {0, 200, 100, 200, 100, 200, 200, 500, 100, 500, 100, 500, 200, 200, 100, 200, 100, 200};
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        v.vibrate(VibrationEffect.createWaveform(pattern, -1));
+                    }
+                    String msgText = "EMERGENCY! " + personName + " pressed SOS!\nLocation: " + lat + ", " + lng;
+                    Notification n = new Notification.Builder(MainActivity.this, CH_SOS)
+                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                        .setContentTitle("SOS ALERT - " + personName)
+                        .setContentText("Location: " + lat + ", " + lng)
+                        .setStyle(new Notification.BigTextStyle().bigText(msgText))
+                        .setAutoCancel(true)
+                        .build();
+                    getSystemService(NotificationManager.class).notify(999, n);
                 }
-
-                // Show SOS push notification
-                Notification n = new Notification.Builder(MainActivity.this, CH_SOS)
-                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                    .setContentTitle("SOS ALERT - " + personName)
-                    .setContentText("Location: " + lat + ", " + lng)
-                    .setStyle(new Notification.BigTextStyle()
-                        .bigText("EMERGENCY! " + personName + " pressed SOS button!\nLocation: " + lat + ", " + lng))
-                    .setAutoCancel(true)
-                    .setPriority(Notification.PRIORITY_MAX)
-                    .setCategory(Notification.CATEGORY_ALARM)
-                    .build();
-
-                getSystemService(NotificationManager.class).notify(999, n);
             });
         }
 
@@ -220,13 +199,12 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        // Save localStorage to SharedPreferences when app goes background
         webView.evaluateJavascript(
             "(function(){" +
             "var t=localStorage.getItem('gt_token')||'';" +
             "var u=localStorage.getItem('gt_user')||'null';" +
             "var p=localStorage.getItem('gt_people')||'[]';" +
-            "if(t) window.AndroidBridge.saveToken(t,u,p);" +
+            "if(t && window.AndroidBridge) window.AndroidBridge.saveToken(t,u,p);" +
             "})()", null);
     }
 }
