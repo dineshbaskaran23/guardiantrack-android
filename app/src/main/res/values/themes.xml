@@ -8,5 +8,4 @@
         <item name="android:navigationBarColor">#112240</item>
         <item name="android:windowBackground">#0A1628</item>
     </style>
-    <style name="Theme.GuardianTrack.Splash" parent="Theme.GuardianTrack"/>
 </resources>

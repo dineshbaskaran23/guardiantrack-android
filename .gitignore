@@ -3,7 +3,5 @@
 local.properties
 .idea/
 */build/
-/captures
 .externalNativeBuild
 .cxx
-*.apk

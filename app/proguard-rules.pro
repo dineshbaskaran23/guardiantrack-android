@@ -1,1 +1,4 @@
 -keep class com.guardiantrack.** { *; }
+-keepattributes *Annotation*
+-dontwarn okhttp3.**
+-dontwarn okio.**
